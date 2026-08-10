@@ -1,101 +1,87 @@
 # Thông Tin Deploy — Checkpoint 5
 
-> Điền file này sau khi deploy xong. `pytest tests/test_cp5.py` đọc file này
-> để tìm địa chỉ service của bạn và gọi thử.
->
-> **Chỉ ghi TÊN biến môi trường, tuyệt đối không dán giá trị API key vào đây.**
-> Repo này công khai — dán khóa vào là mất khóa.
+Service FastAPI của bài lab đã được triển khai công khai trên Railway bằng Dockerfile trong repository. Redis được chạy dưới dạng service riêng trong cùng Railway project và ứng dụng truy cập qua biến tham chiếu nội bộ.
+
+> Tài liệu này chỉ ghi tên và nguồn của biến môi trường. Giá trị API key thật không được lưu trong repository.
 
 ## Thông Tin Học Viên
 
 | Mục | Nội dung |
-|-----|----------|
-| Họ và tên | (điền họ tên) |
-| Mã học viên | (điền mã học viên) |
-| Repo | (điền link repo DAY12-...) |
+|---|---|
+| Họ và tên | Đào Thị Trang |
+| Mã học viên | 2A202601809 |
+| Repository | [TrangDaoThi673/K3-DAY12-2A202601809-DaoThiTrang](https://github.com/TrangDaoThi673/K3-DAY12-2A202601809-DaoThiTrang) |
 
-## Service
+## Thông Tin Service
 
 | Mục | Nội dung |
-|-----|----------|
-| Public URL | https://TODO-thay-bang-url-that.up.railway.app |
-| Platform | Railway / Render / Cloud Run — (điền platform bạn dùng) |
-| Ngày deploy | (điền ngày) |
+|---|---|
+| Public URL | https://day12-agent-production-9a30.up.railway.app |
+| Platform | Railway |
+| Môi trường | production |
+| Ngày deploy | 10/08/2026 |
+| App service | `day12-agent` |
+| Data service | `day12-redis` |
 
-## Biến Môi Trường Đã Set Trên Cloud
+## Biến Môi Trường Trên Cloud
 
-Ghi tên biến và **nguồn giá trị**, không ghi giá trị:
+| Biến | Trạng thái | Nguồn/Cấu hình |
+|---|---|---|
+| `PORT` | Đã set | Railway tự cấp tại runtime; ứng dụng đọc qua `$PORT` |
+| `AGENT_API_KEY` | Đã set | Railway Variables; giá trị bí mật không nằm trong source code |
+| `REDIS_URL` | Đã set | Reference tới `day12-redis.REDIS_URL` trong Railway project |
+| `RATE_LIMIT_PER_MINUTE` | Đã set | `10` request/phút/user |
+| `MONTHLY_BUDGET_USD` | Đã set | `10.0` USD/user/tháng |
+| `LOG_LEVEL` | Đã set | `INFO` |
 
-| Biến | Đã set | Ghi chú |
-|------|--------|---------|
-| `PORT` | ✅ | platform tự gán |
-| `AGENT_API_KEY` | ✅ | đặt trong dashboard, không nằm trong repo |
-| `REDIS_URL` | ✅ | (điền: Redis add-on của platform / Upstash / ...) |
-| `RATE_LIMIT_PER_MINUTE` | ✅ | 10 |
-| `MONTHLY_BUDGET_USD` | ✅ | 10.0 |
-| `LOG_LEVEL` | ✅ | INFO |
+## Kiểm Tra Bản Deploy
 
-## Lệnh Kiểm Tra
+Public URL được kiểm tra từ PowerShell bằng các request sau:
 
-Thay `<URL>` bằng Public URL ở trên:
+```powershell
+$deployUrl = "https://day12-agent-production-9a30.up.railway.app"
 
-```bash
-# 1. Liveness — mong đợi 200 {"status":"ok"}
-curl -i <URL>/health
+curl.exe -i "$deployUrl/health"
+curl.exe -i "$deployUrl/ready"
 
-# 2. Readiness — mong đợi 200 {"status":"ready"} (đã nối được Redis)
-curl -i <URL>/ready
+$unauthorizedBody = @{ question = "Hello" } | ConvertTo-Json
+try {
+    Invoke-WebRequest -UseBasicParsing -Uri "$deployUrl/ask" -Method POST `
+      -ContentType "application/json" -Body $unauthorizedBody
+} catch {
+    $_.Exception.Response.StatusCode.value__  # 401
+}
 
-# 3. Không có API key — mong đợi 401
-curl -i -X POST <URL>/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question":"Hello"}'
-
-# 4. Có API key — mong đợi 200 kèm câu trả lời
-curl -i -X POST <URL>/ask \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $AGENT_API_KEY" \
-  -H "X-User-Id: sv-test" \
-  -d '{"question":"Deploy là gì?"}'
-
-# 5. Rate limit — gọi 15 lần, những lần cuối phải trả 429
-for i in $(seq 1 15); do
-  curl -s -o /dev/null -w "%{http_code} " -X POST <URL>/ask \
-    -H "Content-Type: application/json" \
-    -H "X-API-Key: $AGENT_API_KEY" \
-    -H "X-User-Id: sv-test" \
-    -d '{"question":"test"}'
-done; echo
+# $deployKey được đọc từ secret cục bộ, không được ghi vào repository.
+$headers = @{
+    "X-API-Key" = $deployKey
+    "X-User-Id" = "sv01"
+}
+$body = @{ question = "Deploy la gi?" } | ConvertTo-Json
+$response = Invoke-WebRequest -UseBasicParsing `
+  -Uri "$deployUrl/ask" `
+  -Method POST `
+  -Headers $headers `
+  -ContentType "application/json" `
+  -Body $body
 ```
 
 ## Kết Quả Chạy Thật
 
-Dán output của các lệnh trên vào đây:
+| Request | HTTP status | Kết quả quan sát |
+|---|---:|---|
+| `GET /health` | 200 | `{"status":"ok","service":"day12-agent","version":"1.0.0"}` |
+| `GET /ready` | 200 | `{"status":"ready","redis":true}` |
+| `POST /ask` không có API key | 401 | `{"detail":"invalid or missing API key"}` |
+| `POST /ask` có API key hợp lệ | 200 | Response có `answer`, `user_id`, `history_length`, `cost_usd` và `tokens` |
 
-```
-(điền output)
-```
+Kết quả trên xác nhận service hoạt động qua HTTPS, Redis đã sẵn sàng, endpoint chính được bảo vệ bằng API key và request hợp lệ nhận được câu trả lời từ agent.
 
-## Ảnh Chụp Màn Hình
+## Bằng Chứng
 
-Đặt ảnh trong thư mục `screenshots/`:
+- [Dashboard Railway: agent và Redis đều Online](screenshots/dashboard.png)
+- [Liveness và readiness đều trả 200](screenshots/health-ready.png)
+- [`/ask` không có API key trả 401](screenshots/ask-401.png)
+- [`/ask` có API key hợp lệ trả 200](screenshots/ask-200.png)
 
-- `screenshots/dashboard.png` — trang quản lý service trên platform
-- `screenshots/health.png` — kết quả gọi `/health` từ trình duyệt hoặc curl
-
----
-
-## Nếu Dùng Phương Án Dự Phòng
-
-Không đăng ký được tài khoản cloud? Vẫn nộp được bài, nhưng CP5 tối đa 60% điểm:
-
-1. Đặt `LOCAL_FALLBACK=true` trong `.env`
-2. Chạy `docker compose up -d` rồi kiểm tra `docker compose ps`
-3. Chụp màn hình vào `screenshots/`
-4. Chạy `pytest tests/test_cp5.py -v` — bộ test sẽ tự chuyển sang kiểm tra
-   `http://localhost:8000`
-5. Ghi rõ lý do không deploy được vào phần dưới đây:
-
-```
-(điền lý do nếu dùng phương án dự phòng, ngược lại xóa mục này)
-```
+Các ảnh không hiển thị giá trị thật của `AGENT_API_KEY` hoặc `DEPLOY_API_KEY`.
